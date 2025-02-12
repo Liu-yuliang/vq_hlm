@@ -8,10 +8,10 @@
 
 对transformers主要改动的文件为：
 
-train_hlm_single_model/transformers/models/gpt2/modeling_gpt2.py
+train_hlm_single_model/transformers/models/gpt2/modeling_gpt2.py：对不同类型的层做不同的mask处理（307行左右）；对不同的层做不同的predict处理（1299行左右）；对不同的层做不同的loss处理（1634行左右）；添加VQVAE（82行左右）；添加ctx token predict（1392行左右）
 
-train_hlm_single_model/transformers/modeling_utils.py
+train_hlm_single_model/transformers/modeling_utils.py：传参需要
 
-train_hlm_single_model/transformers/trainer.py
+train_hlm_single_model/transformers/trainer.py：传参需要
 
-train_hlm_single_model/transformers/training_args.py
+train_hlm_single_model/transformers/training_args.py：传参需要
