@@ -3,3 +3,12 @@
 使用runner_rvq_test_use_train_hlm_code.sh可以从带gpt的ckpt中抽出来codebook部分单独eval其rec loss
 
 使用runner_rvq_dlc_6_scheduler_1_2.sh可以在训练时进行lr schedule，但目前只支持在对应py中修改scheduer
+
+example.sh里有参数说明
+
+暂时支持了pile，但还不完善
+  
+支持了在GPT-VQVAE的整体ckpt中抽出来VQVAE单独eval
+  
+支持了VQVAE加scheduler的训练
+
