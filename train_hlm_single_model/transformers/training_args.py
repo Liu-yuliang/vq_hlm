@@ -1565,7 +1565,7 @@ class TrainingArguments:
             "help": (
                 "training_type"
             ),
-            "choices": ['codebook', 'full', 'after_input_layer', 'except_codebook', 'ours', 'only_output_layer', 'only_ctx_layer'],
+            "choices": ['codebook', 'full', 'after_input_layer_include_cb', 'except_codebook', 'ours', 'only_output_layer', 'after_input_layer_exclude_cb', 'only_ctx_layer_include_cb', 'only_ctx_layer_exclude_cb'],
         },
     )
 

@@ -4254,7 +4254,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         # make sure token embedding weights are still tied if needed
         model.tie_weights()
         # import pdb; pdb.set_trace()
-        load_checkpoint(model.transformer.vqvae, None, vae_model['vae_pretrained_model_path'])
+        if vae_model['vae_pretrained_model_path'] is not None:
+            load_checkpoint(model.transformer.vqvae, None, vae_model['vae_pretrained_model_path'])
         # Set model in evaluation mode to deactivate DropOut modules by default
         model.eval()
 

@@ -99,8 +99,6 @@ def get_model(vae_config_path):
             codebook_dim=vae_config['codebook_dim'],
             num_quantizers = vae_config['num_quantizers'],      # specify number of quantizers
             codebook_size = vae_config['codebook_size'],    # codebook size
-            learnable_codebook = vae_config['learnable_codebook'], 
-            kmeans_init = vae_config['kmeans_init'], 
         )
     elif vae_config['vq_type'] == 'GroupedResidualVQ':  
         vqvae = GroupedResidualVQ(
@@ -204,7 +202,6 @@ class GPT2Attention(nn.Module):
         self.config = config
         self.chunk_size = chunk_size
         max_positions = config.max_position_embeddings
-        self.max_positions = max_positions
         self.register_buffer(
             "bias",
             torch.tril(torch.ones((max_positions, max_positions), dtype=torch.bool)).view(
@@ -255,10 +252,11 @@ class GPT2Attention(nn.Module):
         attention_mask = mask.masked_fill(mask == 0, float('-inf')) -1
         self.ctx_attn_mask = attention_mask
         self.ctx_pred_attn_mask = self.ctx_token_attention_mask(int(max_positions // self.chunk_size) + max_positions, self.chunk_size+1, self.chunk_size+1)
-        # import pdb; pdb.set_trace()
+
     def ctx_token_attention_mask(self, seq_len, window_size, window_position):
         
         causal_mask = torch.tril(torch.ones(seq_len, seq_len))
+        # mask = torch.tril(torch.ones(seq_len, seq_len))
         mask = torch.zeros(seq_len, seq_len)
         # 处理每个 window 的额外规则
         for start in range(0, seq_len, window_size):
@@ -293,29 +291,29 @@ class GPT2Attention(nn.Module):
 
     def _attn(self, query, key, value, attention_mask=None, head_mask=None):
         attn_weights = torch.matmul(query, key.transpose(-1, -2))
-        
+
         if self.scale_attn_weights:
             attn_weights = attn_weights / torch.full(
                 [], value.size(-1) ** 0.5, dtype=attn_weights.dtype, device=attn_weights.device
             )
-        # import pdb; pdb.set_trace()
+
         # Layer-wise attention scaling
         if self.scale_attn_by_inverse_layer_idx:
             attn_weights = attn_weights / float(self.layer_idx + 1)
 
+        if not self.is_cross_attention:
+            # if only "normal" attention layer implements causal mask
+            query_length, key_length = query.size(-2), key.size(-2)
+            causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
+            mask_value = torch.finfo(attn_weights.dtype).min
+            # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
+            # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
+            mask_value = torch.full([], mask_value, dtype=attn_weights.dtype, device=attn_weights.device)
+            attn_weights = torch.where(causal_mask, attn_weights.to(attn_weights.dtype), mask_value)
 
         if attention_mask is not None:
             # Apply the attention mask
-            # import pdb; pdb.set_trace()
-            if attn_weights.shape[-1] == self.max_positions:
-                attn_weights = attn_weights + self.base_attn_mask.to(attn_weights.device)
-                
-            elif attn_weights.shape[-1] == int(self.max_positions // self.chunk_size):
-                attn_weights = attn_weights + self.ctx_attn_mask.to(attn_weights.device)
-                
-            elif attn_weights.shape[-1] == self.max_positions + int(self.max_positions // self.chunk_size):
-                attn_weights = attn_weights + self.ctx_pred_attn_mask.to(attn_weights.device)
-            
+            attn_weights = attn_weights + attention_mask
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
@@ -362,19 +360,19 @@ class GPT2Attention(nn.Module):
             # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
             mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype).to(attn_weights.device)
             attn_weights = torch.where(causal_mask, attn_weights, mask_value)
-        # import pdb; pdb.set_trace()
+
         if attention_mask is not None:
             # Apply the attention mask
-            
+            # import pdb; pdb.set_trace()
             if attn_weights.shape[-1] == self.max_positions:
                 attn_weights = attn_weights + self.base_attn_mask.to(attn_weights.device)
-                
+                # attn_weights = attn_weights + self.base_attn_mask
             elif attn_weights.shape[-1] == int(self.max_positions // self.chunk_size):
                 attn_weights = attn_weights + self.ctx_attn_mask.to(attn_weights.device)
-                
+                # attn_weights = attn_weights + self.ctx_attn_mask
             elif attn_weights.shape[-1] == self.max_positions + int(self.max_positions // self.chunk_size):
                 attn_weights = attn_weights + self.ctx_pred_attn_mask.to(attn_weights.device)
-                
+                # attn_weights = attn_weights + self.ctx_pred_attn_mask
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
@@ -443,7 +441,7 @@ class GPT2Attention(nn.Module):
             present = (key, value)
         else:
             present = None
-        # import pdb; pdb.set_trace()
+
         if self.reorder_and_upcast_attn:
             attn_output, attn_weights = self._upcast_and_reordered_attn(query, key, value, attention_mask, head_mask)
         else:
@@ -705,8 +703,7 @@ class GPT2Block(nn.Module):
         super().__init__()
         hidden_size = config.hidden_size
         inner_dim = config.n_inner if config.n_inner is not None else 4 * hidden_size
-        # import pdb; pdb.set_trace()
-        attention_class = GPT2_ATTENTION_CLASSES['eager']
+        attention_class = GPT2_ATTENTION_CLASSES[config._attn_implementation]
 
         self.ln_1 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
         self.attn = attention_class(config=config, layer_idx=layer_idx, chunk_size=chunk_size)
@@ -730,7 +727,6 @@ class GPT2Block(nn.Module):
         output_attentions: Optional[bool] = False,
     ) -> Union[Tuple[torch.Tensor], Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor, ...]]]]:
         residual = hidden_states
-        # import pdb; pdb.set_trace()
         hidden_states = self.ln_1(hidden_states)
         attn_outputs = self.attn(
             hidden_states,
@@ -745,6 +741,27 @@ class GPT2Block(nn.Module):
         # residual connection
         hidden_states = attn_output + residual
 
+        # if encoder_hidden_states is not None:
+        #     # add one self-attention block for cross-attention
+        #     if not hasattr(self, "crossattention"):
+        #         raise ValueError(
+        #             f"If `encoder_hidden_states` are passed, {self} has to be instantiated with "
+        #             "cross-attention layers by setting `config.add_cross_attention=True`"
+        #         )
+        #     residual = hidden_states
+        #     hidden_states = self.ln_cross_attn(hidden_states)
+        #     cross_attn_outputs = self.crossattention(
+        #         hidden_states,
+        #         attention_mask=attention_mask,
+        #         head_mask=head_mask,
+        #         encoder_hidden_states=encoder_hidden_states,
+        #         encoder_attention_mask=encoder_attention_mask,
+        #         output_attentions=output_attentions,
+        #     )
+        #     attn_output = cross_attn_outputs[0]
+        #     # residual connection
+        #     hidden_states = residual + attn_output
+        #     outputs = outputs + cross_attn_outputs[2:]  # add cross attentions if we output attention weights
 
         residual = hidden_states
         hidden_states = self.ln_2(hidden_states)
@@ -1013,13 +1030,13 @@ class GPT2Model(GPT2PreTrainedModel):
         self.model_parallel = False
         self.device_map = None
         self.gradient_checkpointing = False
-        self._attn_implementation = 'eager'
+        self._attn_implementation = config._attn_implementation
 
         # Initialize weights and apply final processing
         self.post_init()
-
-        self.ctx_attn_mask = torch.tensor(1)
-        
+        # load_checkpoint(self.vqvae, None, vae_model['vae_pretrained_model_path'])
+        # import pdb; pdb.set_trace()
+        self.ctx_attn_mask = self.ctx_token_attention_mask(1280, self.chunk_size+1, self.chunk_size+1)
         self.ctx_lm_head = nn.Linear(self.embed_dim, self.vqvae.codebook_size * self.vqvae.num_quantizers)
         self.loss_fct = CrossEntropyLoss()
 
@@ -1091,6 +1108,7 @@ class GPT2Model(GPT2PreTrainedModel):
     def ctx_token_attention_mask(self, seq_len, window_size, window_position):
         
         causal_mask = torch.tril(torch.ones(seq_len, seq_len))
+        # mask = torch.tril(torch.ones(seq_len, seq_len))
         mask = torch.zeros(seq_len, seq_len)
         # 处理每个 window 的额外规则
         for start in range(0, seq_len, window_size):
@@ -1123,7 +1141,7 @@ class GPT2Model(GPT2PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
-        # import pdb; pdb.set_trace()
+        
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -1162,9 +1180,7 @@ class GPT2Model(GPT2PreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.wte(input_ids)
-        # import pdb; pdb.set_trace()
         position_embeds = self.wpe(position_ids)
-        
         hidden_states = inputs_embeds + position_embeds
 
         # Attention mask.
@@ -1238,9 +1254,8 @@ class GPT2Model(GPT2PreTrainedModel):
         all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
         all_hidden_states = () if output_hidden_states else None
         
-        
+        # import pdb; pdb.set_trace()
         if self.input_layers is None:
-            
             for i, (block, layer_past) in enumerate(zip(self.h, past_key_values)):
                 # Model parallel
                 
@@ -1395,19 +1410,24 @@ class GPT2Model(GPT2PreTrainedModel):
                     else:
                         if i == self.ctx_layers:
                             max_indices = torch.argmax(ctx_pred, dim=-1)
-                            # max_indices = ctx_token_ids
                             
                             if isinstance(self.vqvae, VectorQuantize) or isinstance(self.vqvae, ResidualVQ):
                                 qualitized_states = self.vqvae.get_output_from_indices(max_indices)
                             
                             elif isinstance(self.vqvae, SimVQ) or isinstance(self.vqvae, LFQ):
                                 qualitized_states = self.vqvae.indices_to_codes(max_indices)
+                            
+                            # elif isinstance(self.vqvae, ResidualVQ):
+                            #     qualitized_states = self.vqvae.get_output_from_indices(max_indices)
 
 
                             qualitized_states = qualitized_states[:, :-1, :]
                             first_states = hidden_states[:, 0:1, :]
-                            qualitized_states = torch.cat((first_states, qualitized_states), dim=1)
 
+                            # 使用 torch.cat 在第二维上拼接全零张量
+                            # import pdb; pdb.set_trace()
+                            qualitized_states = torch.cat((first_states, qualitized_states), dim=1)
+                            
 
                             hidden_states_res = []
                             for i_token in range(qualitized_states.shape[1]):  # x2.shape[1] = 1024 / n
@@ -1442,14 +1462,12 @@ class GPT2Model(GPT2PreTrainedModel):
                     for k, v in self.device_map.items():
                         if i == v[-1] and "cuda:" + str(k) != self.last_device:
                             hidden_states = hidden_states.to("cuda:" + str(k + 1))
-        
-        # import pdb; pdb.set_trace()
+           
         if hidden_states.shape[1] != 1024:
             hidden_states = hidden_states[:, torch.arange(hidden_states.size(1)) % (self.chunk_size+1) != 0, :]
             hidden_states = self.ln_f(hidden_states)
         else:
             hidden_states = self.ln_f(hidden_states)
-        
         
         try:
             hidden_states = hidden_states.view(output_shape)
@@ -1611,9 +1629,6 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
         lm_logits = self.lm_head(hidden_states)
         # import pdb; pdb.set_trace()
         loss = None
-        # input_ids = input_ids[:-1]
-        if labels is None:
-            labels = input_ids
         if labels is not None:
             # move labels to correct device to enable model parallelism
             labels = labels.to(lm_logits.device)
@@ -1622,20 +1637,17 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
+            # import pdb; pdb.set_trace()
             
-            # import pdb; pdb.set_trace()           
-
+            # try:
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-            # except:
-                
-                # loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
             gpt_loss = loss
             
             if self.training_type == 'full' or self.training_type == 'ours':
                 loss += qualitized_loss
                 loss += ctx_loss
 
-            elif self.training_type == 'after_input_layer_include_cb' or self.training_type == 'after_input_layer_exclude_cb':
+            elif self.training_type == 'after_input_layer':
                 loss += ctx_loss
 
             elif self.training_type == 'except_codebook':
@@ -1644,7 +1656,7 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
             elif self.training_type == 'codebook':
                 loss = qualitized_loss
             
-            elif self.training_type == 'only_ctx_layer_exclude_cb' or 'after_input_layer_include_cb':
+            elif self.training_type == 'only_ctx_layer':
                 loss = ctx_loss
 
             elif self.training_type == 'only_output_layer':

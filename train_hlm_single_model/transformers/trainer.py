@@ -2486,6 +2486,7 @@ class Trainer:
                         else contextlib.nullcontext
                     )
                     with context():
+                        # import pdb; pdb.set_trace()
                         tr_loss_step, qua_loss, ctx_loss, gpt_loss = self.training_step(model, inputs, num_items_in_batch)
                         
 
@@ -2997,14 +2998,11 @@ class Trainer:
 
             # reset tr_loss to zero
             tr_loss -= tr_loss
-            # import pdb; pdb.set_trace()
             logs["loss"] = round(tr_loss_scalar / (self.state.global_step - self._globalstep_last_logged), 4)
             if grad_norm is not None:
                 logs["grad_norm"] = grad_norm.detach().item() if isinstance(grad_norm, torch.Tensor) else grad_norm
             if qua_loss is not None:
                 logs['qua_loss'] = round(qua_loss.item(), 4)
-                # import pdb; pdb.set_trace()
-                # logs['gpt_loss'] = logs["loss"] - round(qua_loss.item(), 4) - round(ctx_loss.item(), 4)
                 logs['gpt_loss'] = round(gpt_loss.item() / (self.state.global_step - self._globalstep_last_logged), 4)
                 logs['ctx_loss'] = round(ctx_loss.item(), 4)
                 # logs['ctx_loss'] = logs["loss"] - round(ctx_loss.item(), 4)
@@ -3632,12 +3630,9 @@ class Trainer:
             with amp.scale_loss(loss, self.optimizer) as scaled_loss:
                 scaled_loss.backward()
         else:
-            # import pdb; pdb.set_trace()
-            
             self.accelerator.backward(loss, **kwargs)
             # Finally we need to normalize the loss for reporting
             if num_items_in_batch is None:
-                # import pdb; pdb.set_trace()
                 return loss.detach() / self.args.gradient_accumulation_steps, qua_loss.detach(), ctx_loss.detach(), gpt_loss.detach()
             return loss.detach()
 
@@ -3658,9 +3653,7 @@ class Trainer:
             inputs = {**inputs, **loss_kwargs}
         # import pdb; pdb.set_trace()
         outputs, qualitized_loss, ctx_loss, gpt_loss = model(**inputs, input_layers=self.input_layers, ctx_layers=self.ctx_layers)
-        # import pdb; pdb.set_trace()
-        # Save past state if it exists
-        # TODO: this needs to be fixed and made cleaner later.
+
         if self.args.past_index >= 0:
             self._past = outputs[self.args.past_index]
 
@@ -3688,7 +3681,6 @@ class Trainer:
 
         if self.args.average_tokens_across_devices and self.model_accepts_loss_kwargs:
             loss *= self.accelerator.num_processes
-        # import pdb; pdb.set_trace()
         return (loss, outputs, qualitized_loss, ctx_loss, gpt_loss) if return_outputs else (loss, qualitized_loss, ctx_loss, gpt_loss)
 
     def is_local_process_zero(self) -> bool:
@@ -4000,7 +3992,7 @@ class Trainer:
         start_time = time.time()
 
         eval_loop = self.prediction_loop if self.args.use_legacy_prediction_loop else self.evaluation_loop
-        # import pdb; pdb.set_trace()
+
         output = eval_loop(
             eval_dataloader,
             description="Evaluation",
@@ -4115,7 +4107,6 @@ class Trainer:
         Works both with or without labels.
         """
         args = self.args
-        # import pdb; pdb.set_trace()
 
         prediction_loss_only = prediction_loss_only if prediction_loss_only is not None else args.prediction_loss_only
 
@@ -4201,7 +4192,6 @@ class Trainer:
             # Prediction step
             # import pdb; pdb.set_trace()
             losses, logits, labels, qualitized_loss, ctx_loss, gpt_loss = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
-            # import pdb; pdb.set_trace()
             main_input_name = getattr(self.model, "main_input_name", "input_ids")
             inputs_decode = (
                 self._prepare_input(inputs[main_input_name]) if "inputs" in args.include_for_metrics else None
@@ -4337,7 +4327,6 @@ class Trainer:
         for key in list(metrics.keys()):
             if not key.startswith(f"{metric_key_prefix}_"):
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
-        # import pdb; pdb.set_trace()
         return EvalLoopOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics, num_samples=num_samples)
 
     def _nested_gather(self, tensors, name=None):
@@ -4414,7 +4403,6 @@ class Trainer:
             labels = None
 
         with torch.no_grad():
-            # import pdb; pdb.set_trace()
             if is_sagemaker_mp_enabled():
                 raw_outputs = smp_forward_only(model, inputs)
                 if has_labels or loss_without_labels:
@@ -4439,7 +4427,6 @@ class Trainer:
                     with self.compute_loss_context_manager():
                         loss, outputs, qualitized_loss, ctx_loss, gpt_loss = self.compute_loss(model, inputs, return_outputs=True)
                     loss = loss.mean().detach()
-                    # import pdb; pdb.set_trace()
                     if isinstance(outputs, dict):
                         logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])
                     else:
@@ -4455,7 +4442,6 @@ class Trainer:
                     # TODO: this needs to be fixed and made cleaner later.
                     if self.args.past_index >= 0:
                         self._past = outputs[self.args.past_index - 1]
-        # import pdb; pdb.set_trace()
         if prediction_loss_only:
             return (loss, None, None, qualitized_loss, ctx_loss, gpt_loss)
 
@@ -4814,7 +4800,6 @@ class Trainer:
             self._past = None
 
         self.callback_handler.eval_dataloader = dataloader
-        import pdb; pdb.set_trace()
         for step, inputs in enumerate(dataloader):
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
             
